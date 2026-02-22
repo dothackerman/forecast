@@ -147,6 +147,7 @@ async def correct_parcel_forecasts(
     ctx: dict[str, Any],
     parcel_ids: list[str],
     valid_time_str: str,
+    source: str = "cosmo",
 ) -> dict[str, Any]:
     """Apply terrain corrections to raw NWP forecasts for a list of parcels.
 
@@ -154,6 +155,7 @@ async def correct_parcel_forecasts(
         ctx: arq context dict.
         parcel_ids: List of parcel UUID strings.
         valid_time_str: ISO-8601 valid time string.
+        source: NWP source name used during ingestion (default: 'cosmo').
 
     Returns:
         Summary with number of parcels processed and any errors.
@@ -193,7 +195,7 @@ async def correct_parcel_forecasts(
 
                 ds = None
                 try:
-                    zarr_key = f"cosmo/{valid_time.strftime('%Y%m%dT%H%M%S')}.zarr"
+                    zarr_key = f"{source}/{valid_time.strftime('%Y%m%dT%H%M%S')}.zarr"
                     exists = await anyio.to_thread.run_sync(zarr_store.exists, zarr_key)
                     if exists:
                         ds = await anyio.to_thread.run_sync(zarr_store.read, zarr_key)
@@ -212,7 +214,7 @@ async def correct_parcel_forecasts(
                     parcel_id=parcel.id,
                     valid_time=valid_time,
                     issued_at=datetime.now(timezone.utc),
-                    source="cosmo",
+                    source=source,
                     zarr_path=zarr_key,
                     **corrected,
                 )

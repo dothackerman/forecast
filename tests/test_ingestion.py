@@ -132,7 +132,7 @@ def test_zarr_store_write_read(tmp_path):
     assert ds_read["t2m"].shape == ds["t2m"].shape
 
 
-def test_zarr_store_exists_false(monkeypatch):
+def test_zarr_store_exists_false():
     """ZarrStore.exists should return False for a non-existent key."""
     from app.ingestion.zarr_store import ZarrStore
 
@@ -146,7 +146,7 @@ def test_zarr_store_exists_false(monkeypatch):
     mock_fs.exists.assert_called_once()
 
 
-def test_zarr_store_list_keys(monkeypatch):
+def test_zarr_store_list_keys():
     """ZarrStore.list_keys should return bucket-relative keys."""
     from app.ingestion.zarr_store import ZarrStore
 
