@@ -22,6 +22,12 @@ async def ingest_forecast_data(
 ) -> dict[str, Any]:
     """Full ingestion pipeline: discover → load → clip → store as Zarr.
 
+    Steps:
+        1. Search STAC catalog for NWP items matching source/time/bbox.
+        2. Load GRIB data from discovered asset URLs.
+        3. Clip to Switzerland bounds and extract canonical variables.
+        4. Write the resulting dataset to Zarr on S3.
+
     Args:
         ctx: arq context dict (contains 'redis' key).
         source: NWP source name (e.g. 'cosmo', 'icon').
@@ -29,8 +35,11 @@ async def ingest_forecast_data(
         valid_time_str: ISO-8601 forecast valid time string.
 
     Returns:
-        Summary dict with zarr_path and item count.
+        Summary dict with zarr_path, item count, and status.
     """
+    import anyio
+
+    from app.ingestion.grib import GRIBIngestionPipeline
     from app.ingestion.stac import STACIngestionClient
     from app.ingestion.zarr_store import ZarrStore
 
@@ -48,8 +57,9 @@ async def ingest_forecast_data(
 
     stac_client = STACIngestionClient(settings.STAC_API_URL)
     zarr_store = ZarrStore(bucket=settings.S3_BUCKET, endpoint_url=settings.AWS_ENDPOINT_URL)
+    grib_pipeline = GRIBIngestionPipeline()
 
-    # Search STAC for relevant items
+    # 1. Search STAC for relevant items
     from datetime import timedelta
 
     dt_range = (valid_time - timedelta(hours=1), valid_time + timedelta(hours=1))
@@ -61,10 +71,64 @@ async def ingest_forecast_data(
         )
         logger.info("Found %d STAC items", len(items))
     except Exception as exc:
-        logger.warning("STAC search failed (%s), continuing without items", exc)
-        items = []
+        logger.warning("STAC search failed: %s", exc)
+        return {
+            "status": "failed",
+            "source": source,
+            "valid_time": valid_time_str,
+            "items_found": 0,
+            "zarr_path": None,
+            "error": f"STAC search failed: {exc}",
+        }
+
+    if not items:
+        logger.warning("No STAC items found for source=%s valid_time=%s", source, valid_time_str)
+        return {
+            "status": "no_data",
+            "source": source,
+            "valid_time": valid_time_str,
+            "items_found": 0,
+            "zarr_path": None,
+        }
 
     zarr_path = f"{source}/{valid_time.strftime('%Y%m%dT%H%M%S')}.zarr"
+
+    # 2–4. Load GRIB, clip, extract variables, and write to Zarr
+    grib_url: str | None = None
+    for item in items:
+        assets = stac_client.fetch_item_assets(item)
+        for key, href in assets.items():
+            if any(href.endswith(ext) for ext in (".grib", ".grib2", ".grb", ".grb2")):
+                grib_url = href
+                break
+            # Fall back to a 'data' asset key
+            if key == "data":
+                grib_url = href
+        if grib_url:
+            break
+
+    if grib_url is None:
+        logger.warning("No GRIB asset found in %d STAC items", len(items))
+        return {
+            "status": "no_data",
+            "source": source,
+            "valid_time": valid_time_str,
+            "items_found": len(items),
+            "zarr_path": None,
+            "error": "No GRIB asset URL found in STAC items",
+        }
+
+    logger.info("Loading GRIB from %s", grib_url)
+
+    def _load_clip_store() -> None:
+        """Sync I/O: load GRIB → clip → extract vars → write Zarr."""
+        ds = grib_pipeline.load_grib_dataset(grib_url)  # type: ignore[arg-type]
+        ds_ch = grib_pipeline.extract_switzerland(ds)
+        ds_vars = grib_pipeline.get_variables(ds_ch)
+        zarr_store.write(ds_vars, zarr_path)
+
+    await anyio.to_thread.run_sync(_load_clip_store)
+    logger.info("Ingestion complete → %s", zarr_path)
 
     return {
         "status": "completed",

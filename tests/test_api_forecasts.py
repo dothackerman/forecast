@@ -159,3 +159,43 @@ async def test_list_forecasts_empty(async_client):
 
     assert response.status_code == 200
     assert response.json() == []
+
+
+# ---------------------------------------------------------------------------
+# POST /forecasts/trigger-ingestion
+# ---------------------------------------------------------------------------
+
+@pytest.mark.asyncio
+async def test_trigger_ingestion_success(async_client):
+    """POST /api/v1/forecasts/trigger-ingestion should enqueue job and return 202."""
+    with patch("app.api.forecasts.arq") as mock_arq:
+        mock_redis = AsyncMock()
+        mock_arq.create_pool = AsyncMock(return_value=mock_redis)
+        mock_arq.connections.RedisSettings.from_dsn.return_value = MagicMock()
+
+        response = await async_client.post(
+            "/api/v1/forecasts/trigger-ingestion",
+            params={"source": "cosmo", "valid_time": "2024-06-01T12:00:00Z"},
+        )
+
+    assert response.status_code == 202
+    data = response.json()
+    assert data["status"] == "accepted"
+    assert data["source"] == "cosmo"
+    mock_redis.enqueue_job.assert_awaited_once()
+    mock_redis.aclose.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_trigger_ingestion_redis_failure(async_client):
+    """POST /api/v1/forecasts/trigger-ingestion returns 503 when Redis is unavailable."""
+    with patch("app.api.forecasts.arq") as mock_arq:
+        mock_arq.create_pool = AsyncMock(side_effect=ConnectionError("Redis down"))
+        mock_arq.connections.RedisSettings.from_dsn.return_value = MagicMock()
+
+        response = await async_client.post(
+            "/api/v1/forecasts/trigger-ingestion",
+            params={"source": "cosmo", "valid_time": "2024-06-01T12:00:00Z"},
+        )
+
+    assert response.status_code == 503

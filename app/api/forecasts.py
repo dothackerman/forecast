@@ -3,7 +3,7 @@ from __future__ import annotations
 import uuid
 from datetime import datetime
 
-from fastapi import APIRouter, BackgroundTasks, HTTPException, Query, status
+from fastapi import APIRouter, HTTPException, Query, status
 from sqlalchemy import select
 
 from app.api.deps import DBSession
@@ -58,7 +58,6 @@ async def list_forecasts(
 
 @router.post("/trigger-ingestion", status_code=status.HTTP_202_ACCEPTED)
 async def trigger_ingestion(
-    background_tasks: BackgroundTasks,
     source: str = Query("cosmo", description="NWP source name"),
     bbox: str = Query(
         "5.96,45.82,10.49,47.81",
@@ -71,17 +70,16 @@ async def trigger_ingestion(
         import arq
         from app.config import settings
 
-        async def _enqueue() -> None:
-            redis = await arq.create_pool(arq.connections.RedisSettings.from_dsn(settings.REDIS_URL))
-            await redis.enqueue_job(
-                "ingest_forecast_data",
-                source,
-                bbox,
-                valid_time.isoformat(),
-            )
-            await redis.aclose()
-
-        background_tasks.add_task(_enqueue)
+        redis = await arq.create_pool(
+            arq.connections.RedisSettings.from_dsn(settings.REDIS_URL)
+        )
+        await redis.enqueue_job(
+            "ingest_forecast_data",
+            source,
+            bbox,
+            valid_time.isoformat(),
+        )
+        await redis.aclose()
     except Exception as exc:
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,

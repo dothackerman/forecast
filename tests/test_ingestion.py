@@ -211,3 +211,86 @@ def test_stac_search_items_mocked():
         )
 
     assert len(results) == 2
+
+
+# ---------------------------------------------------------------------------
+# ingest_forecast_data worker task
+# ---------------------------------------------------------------------------
+
+@pytest.mark.asyncio
+async def test_ingest_forecast_data_full_pipeline():
+    """ingest_forecast_data should discover, load, clip, extract, and write Zarr."""
+    from app.worker.tasks import ingest_forecast_data
+
+    ds = _make_synthetic_ds((10, 10))
+
+    mock_stac = MagicMock()
+    mock_asset = MagicMock()
+    mock_asset.href = "https://example.com/cosmo.grib2"
+    mock_item = MagicMock()
+    mock_item.assets = {"data": mock_asset}
+    mock_stac.return_value.search_items.return_value = [mock_item]
+    mock_stac.return_value.fetch_item_assets.return_value = {
+        "data": "https://example.com/cosmo.grib2",
+    }
+
+    mock_grib = MagicMock()
+    mock_grib.return_value.load_grib_dataset.return_value = ds
+    mock_grib.return_value.extract_switzerland.return_value = ds
+    mock_grib.return_value.get_variables.return_value = ds
+
+    mock_zarr = MagicMock()
+
+    with patch("app.worker.tasks.STACIngestionClient", mock_stac), \
+         patch("app.worker.tasks.GRIBIngestionPipeline", mock_grib), \
+         patch("app.worker.tasks.ZarrStore", mock_zarr):
+        result = await ingest_forecast_data(
+            ctx={},
+            source="cosmo",
+            bbox="5.96,45.82,10.49,47.81",
+            valid_time_str="2024-06-01T12:00:00+00:00",
+        )
+
+    assert result["status"] == "completed"
+    assert result["zarr_path"] == "cosmo/20240601T120000.zarr"
+    assert result["items_found"] == 1
+    mock_grib.return_value.load_grib_dataset.assert_called_once()
+    mock_grib.return_value.extract_switzerland.assert_called_once()
+    mock_grib.return_value.get_variables.assert_called_once()
+    mock_zarr.return_value.write.assert_called_once()
+
+
+@pytest.mark.asyncio
+async def test_ingest_forecast_data_no_items():
+    """ingest_forecast_data returns no_data when STAC finds no items."""
+    from app.worker.tasks import ingest_forecast_data
+
+    mock_stac = MagicMock()
+    mock_stac.return_value.search_items.return_value = []
+
+    with patch("app.worker.tasks.STACIngestionClient", mock_stac), \
+         patch("app.worker.tasks.GRIBIngestionPipeline"), \
+         patch("app.worker.tasks.ZarrStore"):
+        result = await ingest_forecast_data(
+            ctx={},
+            source="cosmo",
+            bbox="5.96,45.82,10.49,47.81",
+            valid_time_str="2024-06-01T12:00:00+00:00",
+        )
+
+    assert result["status"] == "no_data"
+    assert result["items_found"] == 0
+
+
+@pytest.mark.asyncio
+async def test_ingest_forecast_data_invalid_bbox():
+    """ingest_forecast_data raises ValueError for malformed bbox."""
+    from app.worker.tasks import ingest_forecast_data
+
+    with pytest.raises(ValueError, match="exactly 4"):
+        await ingest_forecast_data(
+            ctx={},
+            source="cosmo",
+            bbox="5.96,45.82,10.49",
+            valid_time_str="2024-06-01T12:00:00+00:00",
+        )
