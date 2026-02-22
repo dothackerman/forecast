@@ -171,7 +171,7 @@ class WorkerSettings:
     redis_settings = None  # resolved at startup from env
 
     @classmethod
-    def get_redis_settings(cls):  # type: ignore[return]
+    def get_redis_settings(cls) -> "arq.connections.RedisSettings":
         import arq.connections
 
         return arq.connections.RedisSettings.from_dsn(settings.REDIS_URL)

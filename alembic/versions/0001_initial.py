@@ -28,11 +28,6 @@ def upgrade() -> None:
         sa.Column("id", postgresql.UUID(as_uuid=True), nullable=False),
         sa.Column("parcel_id", sa.String(255), nullable=False),
         sa.Column("name", sa.String(512), nullable=True),
-        sa.Column(
-            "geometry",
-            sa.NullType(),  # GeoAlchemy2 type rendered by native DDL
-            nullable=False,
-        ),
         sa.Column("area_ha", sa.Float(), nullable=False, server_default="0"),
         sa.Column("elevation_m", sa.Float(), nullable=False, server_default="0"),
         sa.Column("slope_deg", sa.Float(), nullable=False, server_default="0"),
@@ -51,19 +46,13 @@ def upgrade() -> None:
         ),
         sa.PrimaryKeyConstraint("id"),
     )
-    # Create the geometry column properly via AddGeometryColumn
-    op.execute(
-        "SELECT AddGeometryColumn('parcels', 'geom_col', 4326, 'POLYGON', 2)"
-    )
-    # Drop the placeholder NullType column and use the PostGIS-created one
-    # Actually: drop the null geometry column and re-add via PostGIS helper
-    op.execute("ALTER TABLE parcels DROP COLUMN geometry")
+    # Add the PostGIS geometry column via raw DDL so the geometry_columns
+    # catalog is populated correctly
     op.execute(
         "ALTER TABLE parcels ADD COLUMN geometry geometry(POLYGON, 4326) NOT NULL"
         " DEFAULT ST_GeomFromText('POLYGON EMPTY', 4326)"
     )
     op.execute("ALTER TABLE parcels ALTER COLUMN geometry DROP DEFAULT")
-    op.execute("DROP TABLE IF EXISTS geometry_columns_temp")  # cleanup helper artefact
 
     op.create_index("ix_parcels_parcel_id", "parcels", ["parcel_id"], unique=True)
     op.create_index(

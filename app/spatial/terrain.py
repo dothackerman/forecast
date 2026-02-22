@@ -8,7 +8,7 @@ import xarray as xr
 
 
 class TerrainAnalyzer:
-    """Analyse DEM rasters to extract elevation, slope, and aspect for parcels."""
+    """Analyze DEM rasters to extract elevation, slope, and aspect for parcels."""
 
     def load_dem(self, path_or_url: Union[str, Path]) -> xr.DataArray:
         """Load a DEM raster as an xarray DataArray using rioxarray.
