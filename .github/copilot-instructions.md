@@ -29,33 +29,51 @@ Data flow: **STAC catalog → GRIB file → clip to CH bounds → Zarr on S3 →
 | `app/spatial/` | `PhysicsLiteCorrection` (lapse-rate, solar, wind derivation) and `TerrainAnalyzer` (DEM slope/aspect). |
 | `app/worker/` | arq task definitions and `WorkerSettings`. |
 | `alembic/` | Migrations use the sync URL. First migration enables PostGIS and adds geometry columns via raw DDL. |
+| `tests/` | Structured by domain: `tests/api/`, `tests/ingestion/`, `tests/spatial/`, `tests/worker/`. |
+| `tests/factories.py` | Shared mock builders (`make_mock_parcel`, `make_mock_forecast`, `make_synthetic_ds`, `make_grid_ds`, `make_dem_da`) and constants. |
 
 ## Dev Workflow
 
+A `Makefile` provides all common commands (run `make help` or see targets below):
+
 ```bash
+# Bootstrap (copy .env.example → .env, install dev deps)
+make setup
+
 # Start infra (PostGIS 16 + Redis 7)
-docker compose up -d postgres redis
+make infra          # or: docker compose up -d postgres redis
 
 # Run migrations
-alembic upgrade head
+make migrate        # or: alembic upgrade head
 
 # Start API (hot-reload)
-uvicorn app.main:app --reload
+make serve          # or: uvicorn app.main:app --reload
 
 # Start worker
-python -m arq app.worker.tasks.WorkerSettings
+make worker         # or: python -m arq app.worker.tasks.WorkerSettings
 
 # Run tests (no live DB required — tests mock the DB session)
-pytest
+make test           # or: pytest
+
+# Lint & format
+make lint           # check only
+make fix            # auto-fix
 ```
 
 ## Testing Patterns
 
 - Tests use **`pytest-asyncio` with `asyncio_mode = "auto"`** — async test functions are detected automatically, no `@pytest.mark.asyncio` decorator needed (though it's used for clarity).
+- Tests are organised by domain: `tests/api/`, `tests/ingestion/`, `tests/spatial/`, `tests/worker/`.
+- Reusable factories live in **`tests/factories.py`** — import `make_mock_parcel`, `make_synthetic_ds`, etc. from there instead of defining local helpers.
 - API tests override `get_db` via `app.dependency_overrides[get_db]` with an async generator yielding a `MagicMock` session. Always clear overrides after: `app.dependency_overrides.clear()`.
 - HTTP calls use `httpx.AsyncClient` with `ASGITransport(app=app)` (no live server).
-- Spatial/ingestion tests create synthetic `xr.Dataset` grids (see helpers like `_make_synthetic_ds()`, `_make_grid_ds()`) — no real GRIB files needed.
+- Spatial/ingestion tests use synthetic `xr.Dataset` grids from `tests.factories` — no real GRIB files needed.
 - S3 interactions are mocked by injecting `store._fs = MagicMock()`.
+
+## Linting
+
+- **ruff** is the project linter/formatter. Config lives in `pyproject.toml` under `[tool.ruff]`.
+- Run `make lint` to check, `make fix` to auto-fix.
 
 ## Adding a New Endpoint
 

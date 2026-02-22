@@ -5,7 +5,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from tests.conftest import SAMPLE_PARCEL_ID, make_mock_forecast
+from tests.factories import SAMPLE_PARCEL_ID, make_mock_forecast
 
 
 # ---------------------------------------------------------------------------

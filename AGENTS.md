@@ -6,21 +6,17 @@ Swiss parcel-level weather forecasting backend. FastAPI + arq worker, PostGIS, S
 
 ## Quick Reference
 
+A `Makefile` provides all common targets:
+
 ```bash
-# Infra
-docker compose up -d postgres redis
-
-# Migrations (sync psycopg2 URL)
-alembic upgrade head
-
-# API
-uvicorn app.main:app --reload
-
-# Worker
-python -m arq app.worker.tasks.WorkerSettings
-
-# Tests (no live DB — fully mocked)
-pytest
+make setup          # cp .env.example .env + install dev deps
+make infra          # docker compose up -d postgres redis
+make migrate        # alembic upgrade head
+make serve          # uvicorn app.main:app --reload
+make worker         # python -m arq app.worker.tasks.WorkerSettings
+make test           # pytest
+make lint           # ruff check + ruff format --check
+make fix            # ruff check --fix + ruff format
 ```
 
 ## Architecture
@@ -53,14 +49,23 @@ Two async processes, one codebase:
 | `app/spatial/` | `PhysicsLiteCorrection` (lapse-rate, solar), `TerrainAnalyzer` (DEM slope/aspect). |
 | `app/worker/` | arq task functions + `WorkerSettings`. |
 | `alembic/` | Migrations. First migration enables PostGIS via raw DDL. |
+| `tests/` | Structured by domain: `tests/api/`, `tests/ingestion/`, `tests/spatial/`, `tests/worker/`. |
+| `tests/factories.py` | Shared mock builders and synthetic dataset helpers. Import from here instead of redefining locally. |
 
 ## Testing Rules
 
 - `pytest-asyncio` with `asyncio_mode = "auto"` — async tests auto-detected.
+- Tests organised by domain: `tests/api/`, `tests/ingestion/`, `tests/spatial/`, `tests/worker/`.
+- Shared factories in `tests/factories.py` — never redefine helpers locally.
 - API tests: override `get_db` with `app.dependency_overrides[get_db]`, yield a `MagicMock` session, always call `app.dependency_overrides.clear()` after.
 - HTTP client: `httpx.AsyncClient` with `ASGITransport(app=app)`, no live server.
-- Spatial/ingestion: build synthetic `xr.Dataset` grids (see `_make_synthetic_ds()`, `_make_grid_ds()` in tests).
+- Spatial/ingestion: use `make_synthetic_ds()`, `make_grid_ds()`, `make_dem_da()` from `tests.factories`.
 - S3: mock by setting `store._fs = MagicMock()`.
+
+## Linting
+
+- **ruff** for linting + formatting. Config in `pyproject.toml` (`[tool.ruff]`).
+- Run `make lint` / `make fix`.
 
 ## Adding a New Endpoint
 

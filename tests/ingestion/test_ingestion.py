@@ -7,28 +7,7 @@ import numpy as np
 import pytest
 import xarray as xr
 
-
-# ---------------------------------------------------------------------------
-# Helpers
-# ---------------------------------------------------------------------------
-
-def _make_synthetic_ds(shape: tuple[int, int] = (10, 10)) -> xr.Dataset:
-    """Create a small synthetic NWP-like dataset over Switzerland."""
-    lat = np.linspace(45.82, 47.81, shape[0])
-    lon = np.linspace(5.96, 10.49, shape[1])
-    rng = np.random.default_rng(42)
-
-    return xr.Dataset(
-        {
-            "t2m": (["latitude", "longitude"], 285.0 + rng.normal(0, 2, shape)),
-            "tp": (["latitude", "longitude"], rng.uniform(0, 5, shape)),
-            "u10": (["latitude", "longitude"], rng.normal(0, 3, shape)),
-            "v10": (["latitude", "longitude"], rng.normal(0, 3, shape)),
-            "r2": (["latitude", "longitude"], rng.uniform(40, 95, shape)),
-            "ssrd": (["latitude", "longitude"], rng.uniform(0, 800, shape)),
-        },
-        coords={"latitude": lat, "longitude": lon},
-    )
+from tests.factories import make_synthetic_ds
 
 
 # ---------------------------------------------------------------------------
@@ -60,7 +39,7 @@ def test_get_variables_canonical():
     """get_variables should rename and return canonical variable names."""
     from app.ingestion.grib import GRIBIngestionPipeline
 
-    ds = _make_synthetic_ds()
+    ds = make_synthetic_ds()
     pipeline = GRIBIngestionPipeline()
     result = pipeline.get_variables(ds)
 
@@ -108,7 +87,7 @@ def test_zarr_store_write_read(tmp_path):
     """ZarrStore.write and .read should round-trip an xarray Dataset via mocked S3."""
     from app.ingestion.zarr_store import ZarrStore
 
-    ds = _make_synthetic_ds((5, 5))
+    ds = make_synthetic_ds((5, 5))
     store = ZarrStore(bucket="test-bucket")
 
     # Mock S3Map to redirect to a local Zarr store
@@ -222,7 +201,7 @@ async def test_ingest_forecast_data_full_pipeline():
     """ingest_forecast_data should discover, load, clip, extract, and write Zarr."""
     from app.worker.tasks import ingest_forecast_data
 
-    ds = _make_synthetic_ds((10, 10))
+    ds = make_synthetic_ds((10, 10))
 
     mock_stac = MagicMock()
     mock_asset = MagicMock()

@@ -5,7 +5,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from tests.conftest import (
+from tests.factories import (
     SAMPLE_PARCEL_ID,
     SAMPLE_POLYGON_GEOJSON,
     make_mock_parcel,
