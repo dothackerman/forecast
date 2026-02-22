@@ -1,0 +1,275 @@
+from __future__ import annotations
+
+from datetime import datetime, timezone
+from unittest.mock import MagicMock, patch
+
+import numpy as np
+import pytest
+import xarray as xr
+
+from tests.factories import make_synthetic_ds
+
+
+# ---------------------------------------------------------------------------
+# GRIBIngestionPipeline
+# ---------------------------------------------------------------------------
+
+def test_extract_switzerland():
+    """extract_switzerland should clip dataset to CH_BOUNDS."""
+    from app.ingestion.grib import GRIBIngestionPipeline
+
+    # Use a fine grid so points actually fall within Swiss bounds
+    ds = xr.Dataset(
+        {"t2m": (["latitude", "longitude"], np.ones((180, 360)))},
+        coords={
+            "latitude": np.linspace(-90, 89, 180),
+            "longitude": np.linspace(-180, 179, 360),
+        },
+    )
+    pipeline = GRIBIngestionPipeline()
+    ds_ch = pipeline.extract_switzerland(ds)
+
+    # Dataset should be non-empty and within bounds + 1° tolerance
+    assert ds_ch.sizes["latitude"] > 0
+    assert float(ds_ch.latitude.min()) >= 45.82 - 1
+    assert float(ds_ch.latitude.max()) <= 47.81 + 1
+
+
+def test_get_variables_canonical():
+    """get_variables should rename and return canonical variable names."""
+    from app.ingestion.grib import GRIBIngestionPipeline
+
+    ds = make_synthetic_ds()
+    pipeline = GRIBIngestionPipeline()
+    result = pipeline.get_variables(ds)
+
+    for expected_var in ["t2m", "tp", "u10", "v10", "r2", "ssrd"]:
+        assert expected_var in result.data_vars
+
+
+def test_get_variables_with_aliases():
+    """get_variables should handle aliased variable names from GRIB files."""
+    from app.ingestion.grib import GRIBIngestionPipeline
+
+    lat = np.linspace(46, 47, 5)
+    lon = np.linspace(7, 9, 5)
+    ds = xr.Dataset(
+        {
+            "2m_temperature": (["latitude", "longitude"], np.full((5, 5), 280.0)),
+            "total_precipitation": (["latitude", "longitude"], np.zeros((5, 5))),
+        },
+        coords={"latitude": lat, "longitude": lon},
+    )
+    pipeline = GRIBIngestionPipeline()
+    result = pipeline.get_variables(ds)
+    assert "t2m" in result.data_vars
+    assert "tp" in result.data_vars
+
+
+def test_get_variables_missing_raises():
+    """get_variables should raise KeyError if no expected variables are present."""
+    from app.ingestion.grib import GRIBIngestionPipeline
+
+    ds = xr.Dataset(
+        {"unknown_var": (["x", "y"], np.zeros((3, 3)))},
+        coords={"x": [0, 1, 2], "y": [0, 1, 2]},
+    )
+    pipeline = GRIBIngestionPipeline()
+    with pytest.raises(KeyError):
+        pipeline.get_variables(ds)
+
+
+# ---------------------------------------------------------------------------
+# ZarrStore – mock S3
+# ---------------------------------------------------------------------------
+
+def test_zarr_store_write_read(tmp_path):
+    """ZarrStore.write and .read should round-trip an xarray Dataset via mocked S3."""
+    from app.ingestion.zarr_store import ZarrStore
+
+    ds = make_synthetic_ds((5, 5))
+    store = ZarrStore(bucket="test-bucket")
+
+    # Mock S3Map to redirect to a local Zarr store
+    local_store_path = str(tmp_path / "test.zarr")
+    mock_fs = MagicMock()
+    store._fs = mock_fs
+
+    with patch("app.ingestion.zarr_store.s3fs.S3Map") as MockS3Map:
+        MockS3Map.return_value = local_store_path
+        store.write(ds, "cosmo/test.zarr")
+
+    # Verify write was called through ZarrStore, and data is on disk
+    ds_read_raw = xr.open_zarr(local_store_path)
+    assert set(ds_read_raw.data_vars) == set(ds.data_vars)
+
+    with patch("app.ingestion.zarr_store.s3fs.S3Map") as MockS3Map:
+        MockS3Map.return_value = local_store_path
+        ds_read = store.read("cosmo/test.zarr")
+
+    assert set(ds_read.data_vars) == set(ds.data_vars)
+    assert ds_read["t2m"].shape == ds["t2m"].shape
+
+
+def test_zarr_store_exists_false():
+    """ZarrStore.exists should return False for a non-existent key."""
+    from app.ingestion.zarr_store import ZarrStore
+
+    mock_fs = MagicMock()
+    mock_fs.exists.return_value = False
+
+    store = ZarrStore(bucket="test-bucket")
+    store._fs = mock_fs
+
+    assert store.exists("nonexistent/key") is False
+    mock_fs.exists.assert_called_once()
+
+
+def test_zarr_store_list_keys():
+    """ZarrStore.list_keys should return bucket-relative keys."""
+    from app.ingestion.zarr_store import ZarrStore
+
+    mock_fs = MagicMock()
+    mock_fs.ls.return_value = ["test-bucket/cosmo/a.zarr", "test-bucket/cosmo/b.zarr"]
+
+    store = ZarrStore(bucket="test-bucket")
+    store._fs = mock_fs
+
+    keys = store.list_keys("cosmo")
+    assert keys == ["cosmo/a.zarr", "cosmo/b.zarr"]
+
+
+# ---------------------------------------------------------------------------
+# STACIngestionClient – mocked
+# ---------------------------------------------------------------------------
+
+def test_stac_fetch_item_assets():
+    """fetch_item_assets should return a mapping of asset key → href."""
+    from app.ingestion.stac import STACIngestionClient
+
+    mock_asset_a = MagicMock()
+    mock_asset_a.href = "https://example.com/data.grib2"
+    mock_asset_b = MagicMock()
+    mock_asset_b.href = "https://example.com/meta.json"
+
+    mock_item = MagicMock()
+    mock_item.assets = {"data": mock_asset_a, "metadata": mock_asset_b}
+
+    client = STACIngestionClient("https://example.com/stac")
+    assets = client.fetch_item_assets(mock_item)
+
+    assert assets == {
+        "data": "https://example.com/data.grib2",
+        "metadata": "https://example.com/meta.json",
+    }
+
+
+def test_stac_search_items_mocked():
+    """search_items should return items from the STAC catalog."""
+    from app.ingestion.stac import STACIngestionClient
+
+    mock_item_1 = MagicMock()
+    mock_item_2 = MagicMock()
+
+    with patch("pystac_client.Client.open") as mock_open:
+        mock_client = MagicMock()
+        mock_open.return_value = mock_client
+
+        mock_search = MagicMock()
+        mock_search.items.return_value = [mock_item_1, mock_item_2]
+        mock_client.search.return_value = mock_search
+
+        client = STACIngestionClient("https://example.com/stac")
+        results = client.search_items(
+            bbox=(5.96, 45.82, 10.49, 47.81),
+            datetime_range=(
+                datetime(2024, 6, 1, tzinfo=timezone.utc),
+                datetime(2024, 6, 2, tzinfo=timezone.utc),
+            ),
+            collections=["cosmo"],
+        )
+
+    assert len(results) == 2
+
+
+# ---------------------------------------------------------------------------
+# ingest_forecast_data worker task
+# ---------------------------------------------------------------------------
+
+@pytest.mark.asyncio
+async def test_ingest_forecast_data_full_pipeline():
+    """ingest_forecast_data should discover, load, clip, extract, and write Zarr."""
+    from app.worker.tasks import ingest_forecast_data
+
+    ds = make_synthetic_ds((10, 10))
+
+    mock_stac = MagicMock()
+    mock_asset = MagicMock()
+    mock_asset.href = "https://example.com/cosmo.grib2"
+    mock_item = MagicMock()
+    mock_item.assets = {"data": mock_asset}
+    mock_stac.return_value.search_items.return_value = [mock_item]
+    mock_stac.return_value.fetch_item_assets.return_value = {
+        "data": "https://example.com/cosmo.grib2",
+    }
+
+    mock_grib = MagicMock()
+    mock_grib.return_value.load_grib_dataset.return_value = ds
+    mock_grib.return_value.extract_switzerland.return_value = ds
+    mock_grib.return_value.get_variables.return_value = ds
+
+    mock_zarr = MagicMock()
+
+    with patch("app.worker.tasks.STACIngestionClient", mock_stac), \
+         patch("app.worker.tasks.GRIBIngestionPipeline", mock_grib), \
+         patch("app.worker.tasks.ZarrStore", mock_zarr):
+        result = await ingest_forecast_data(
+            ctx={},
+            source="cosmo",
+            bbox="5.96,45.82,10.49,47.81",
+            valid_time_str="2024-06-01T12:00:00+00:00",
+        )
+
+    assert result["status"] == "completed"
+    assert result["zarr_path"] == "cosmo/20240601T120000.zarr"
+    assert result["items_found"] == 1
+    mock_grib.return_value.load_grib_dataset.assert_called_once()
+    mock_grib.return_value.extract_switzerland.assert_called_once()
+    mock_grib.return_value.get_variables.assert_called_once()
+    mock_zarr.return_value.write.assert_called_once()
+
+
+@pytest.mark.asyncio
+async def test_ingest_forecast_data_no_items():
+    """ingest_forecast_data returns no_data when STAC finds no items."""
+    from app.worker.tasks import ingest_forecast_data
+
+    mock_stac = MagicMock()
+    mock_stac.return_value.search_items.return_value = []
+
+    with patch("app.worker.tasks.STACIngestionClient", mock_stac), \
+         patch("app.worker.tasks.GRIBIngestionPipeline"), \
+         patch("app.worker.tasks.ZarrStore"):
+        result = await ingest_forecast_data(
+            ctx={},
+            source="cosmo",
+            bbox="5.96,45.82,10.49,47.81",
+            valid_time_str="2024-06-01T12:00:00+00:00",
+        )
+
+    assert result["status"] == "no_data"
+    assert result["items_found"] == 0
+
+
+@pytest.mark.asyncio
+async def test_ingest_forecast_data_invalid_bbox():
+    """ingest_forecast_data raises ValueError for malformed bbox."""
+    from app.worker.tasks import ingest_forecast_data
+
+    with pytest.raises(ValueError, match="exactly 4"):
+        await ingest_forecast_data(
+            ctx={},
+            source="cosmo",
+            bbox="5.96,45.82,10.49",
+            valid_time_str="2024-06-01T12:00:00+00:00",
+        )
