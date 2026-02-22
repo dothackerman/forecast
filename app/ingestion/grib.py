@@ -97,14 +97,14 @@ class GRIBIngestionPipeline:
         if rename_map:
             ds = ds.rename(rename_map)
 
-        desired = {"t2m", "tp", "u10", "v10", "r2", "ssrd"}
-        present = desired.intersection(set(ds.data_vars))
+        canonical_order = ["t2m", "tp", "u10", "v10", "r2", "ssrd"]
+        present = [v for v in canonical_order if v in ds.data_vars]
         if not present:
             raise KeyError(
                 f"No expected variables found in dataset. "
                 f"Available: {list(ds.data_vars)}"
             )
-        return ds[list(present)]
+        return ds[present]
 
     def to_zarr(self, ds: xr.Dataset, s3_path: str) -> None:
         """Write an xarray Dataset to a Zarr store on S3.

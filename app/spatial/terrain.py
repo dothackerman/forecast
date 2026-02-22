@@ -126,7 +126,9 @@ class TerrainAnalyzer:
         from shapely.geometry import mapping
 
         # Clip DEM to parcel bounding box first, then mask
-        dem_clipped = dem.squeeze().rio.clip([mapping(geometry)], crs="EPSG:4326", all_touched=True)
+        # Use the DEM's native CRS rather than hardcoding EPSG:4326
+        dem_crs = dem.rio.crs if dem.rio.crs is not None else "EPSG:4326"
+        dem_clipped = dem.squeeze().rio.clip([mapping(geometry)], crs=dem_crs, all_touched=True)
 
         elev_vals = dem_clipped.values.flatten()
         elev_vals = elev_vals[~np.isnan(elev_vals)]
@@ -140,8 +142,16 @@ class TerrainAnalyzer:
         aspect_vals = aspect_da.values.flatten()
         aspect_vals = aspect_vals[~np.isnan(aspect_vals)]
 
+        # Circular mean for aspect to handle 0/360 wrap-around correctly
+        if len(aspect_vals):
+            mean_sin = float(np.mean(np.sin(np.radians(aspect_vals))))
+            mean_cos = float(np.mean(np.cos(np.radians(aspect_vals))))
+            mean_aspect = float(np.degrees(np.arctan2(mean_sin, mean_cos)) % 360)
+        else:
+            mean_aspect = 0.0
+
         return {
             "elevation_m": float(np.mean(elev_vals)) if len(elev_vals) else 0.0,
             "slope_deg": float(np.mean(slope_vals)) if len(slope_vals) else 0.0,
-            "aspect_deg": float(np.mean(aspect_vals)) if len(aspect_vals) else 0.0,
+            "aspect_deg": mean_aspect,
         }

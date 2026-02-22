@@ -35,8 +35,13 @@ async def ingest_forecast_data(
     from app.ingestion.zarr_store import ZarrStore
 
     valid_time = datetime.fromisoformat(valid_time_str)
+    parts = bbox.split(",")
+    if len(parts) != 4:
+        raise ValueError(
+            f"bbox must contain exactly 4 comma-separated floats, got {len(parts)}: {bbox!r}"
+        )
     bbox_tuple: tuple[float, float, float, float] = tuple(  # type: ignore[assignment]
-        float(v) for v in bbox.split(",")
+        float(v) for v in parts
     )
 
     logger.info("Starting ingestion for source=%s valid_time=%s", source, valid_time_str)
@@ -119,11 +124,15 @@ async def correct_parcel_forecasts(
 
                 # Attempt to load a pre-ingested Zarr dataset
                 # (fall back gracefully if unavailable)
+                # Run sync I/O in a thread to avoid blocking the event loop
+                import anyio
+
                 ds = None
                 try:
                     zarr_key = f"cosmo/{valid_time.strftime('%Y%m%dT%H%M%S')}.zarr"
-                    if zarr_store.exists(zarr_key):
-                        ds = zarr_store.read(zarr_key)
+                    exists = await anyio.to_thread.run_sync(zarr_store.exists, zarr_key)
+                    if exists:
+                        ds = await anyio.to_thread.run_sync(zarr_store.read, zarr_key)
                 except Exception as exc:
                     logger.warning("Could not load Zarr for %s: %s", pid_str, exc)
 
@@ -131,7 +140,9 @@ async def correct_parcel_forecasts(
                     errors.append(f"No dataset available for parcel {pid_str}")
                     continue
 
-                corrected = corrector.correct_forecast(ds, parcel)
+                corrected = await anyio.to_thread.run_sync(
+                    corrector.correct_forecast, ds, parcel
+                )
 
                 forecast = WeatherForecast(
                     parcel_id=parcel.id,

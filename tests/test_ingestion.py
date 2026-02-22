@@ -105,22 +105,29 @@ def test_get_variables_missing_raises():
 # ---------------------------------------------------------------------------
 
 def test_zarr_store_write_read(tmp_path):
-    """ZarrStore.write and .read should round-trip an xarray Dataset."""
+    """ZarrStore.write and .read should round-trip an xarray Dataset via mocked S3."""
     from app.ingestion.zarr_store import ZarrStore
 
     ds = _make_synthetic_ds((5, 5))
-
     store = ZarrStore(bucket="test-bucket")
 
-    # Use local filesystem via a mock S3 fs backed by tmp_path
-    import s3fs
-
+    # Mock S3Map to redirect to a local Zarr store
     local_store_path = str(tmp_path / "test.zarr")
-    # Write directly to local path as a stand-in
-    ds.to_zarr(local_store_path, mode="w")
+    mock_fs = MagicMock()
+    store._fs = mock_fs
 
-    # Verify round-trip without S3 interaction
-    ds_read = xr.open_zarr(local_store_path)
+    with patch("app.ingestion.zarr_store.s3fs.S3Map") as MockS3Map:
+        MockS3Map.return_value = local_store_path
+        store.write(ds, "cosmo/test.zarr")
+
+    # Verify write was called through ZarrStore, and data is on disk
+    ds_read_raw = xr.open_zarr(local_store_path)
+    assert set(ds_read_raw.data_vars) == set(ds.data_vars)
+
+    with patch("app.ingestion.zarr_store.s3fs.S3Map") as MockS3Map:
+        MockS3Map.return_value = local_store_path
+        ds_read = store.read("cosmo/test.zarr")
+
     assert set(ds_read.data_vars) == set(ds.data_vars)
     assert ds_read["t2m"].shape == ds["t2m"].shape
 
