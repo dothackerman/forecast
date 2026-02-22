@@ -11,7 +11,7 @@ class ZarrStore:
         self.endpoint_url = endpoint_url or None
         self._fs = None
 
-    def _get_fs(self):  # type: ignore[return]
+    def _get_fs(self) -> "s3fs.S3FileSystem":
         """Lazy-initialise the S3 filesystem."""
         if self._fs is None:
             import s3fs

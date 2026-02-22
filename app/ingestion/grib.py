@@ -105,21 +105,3 @@ class GRIBIngestionPipeline:
                 f"Available: {list(ds.data_vars)}"
             )
         return ds[present]
-
-    def to_zarr(self, ds: xr.Dataset, s3_path: str) -> None:
-        """Write an xarray Dataset to a Zarr store on S3.
-
-        Args:
-            ds: Dataset to persist.
-            s3_path: S3 URI, e.g. 's3://bucket/path/to/store'.
-        """
-        import s3fs
-        from app.config import settings
-
-        fs = s3fs.S3FileSystem(
-            key=settings.AWS_ACCESS_KEY_ID,
-            secret=settings.AWS_SECRET_ACCESS_KEY,
-            endpoint_url=settings.AWS_ENDPOINT_URL or None,
-        )
-        store = s3fs.S3Map(root=s3_path, s3=fs, check=False)
-        ds.to_zarr(store, mode="w", consolidated=True)

@@ -101,8 +101,8 @@ async def ingest_forecast_data(
             if any(href.endswith(ext) for ext in (".grib", ".grib2", ".grb", ".grb2")):
                 grib_url = href
                 break
-            # Fall back to a 'data' asset key
-            if key == "data":
+            # Fall back to a 'data' asset key only if it looks like a GRIB file
+            if key == "data" and grib_url is None:
                 grib_url = href
         if grib_url:
             break
@@ -160,9 +160,9 @@ async def correct_parcel_forecasts(
     Returns:
         Summary with number of parcels processed and any errors.
     """
-    from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
     from sqlalchemy import select
 
+    from app.database import AsyncSessionLocal
     from app.models.parcel import Parcel
     from app.models.forecast import WeatherForecast
     from app.spatial.correction import PhysicsLiteCorrection
@@ -172,13 +172,10 @@ async def correct_parcel_forecasts(
     corrector = PhysicsLiteCorrection()
     zarr_store = ZarrStore(bucket=settings.S3_BUCKET, endpoint_url=settings.AWS_ENDPOINT_URL)
 
-    engine = create_async_engine(settings.DATABASE_URL, echo=False)
-    session_factory = async_sessionmaker(engine, expire_on_commit=False)
-
     processed: list[str] = []
     errors: list[str] = []
 
-    async with session_factory() as session:
+    async with AsyncSessionLocal() as session:
         for pid_str in parcel_ids:
             try:
                 pid = uuid.UUID(pid_str)
@@ -227,8 +224,6 @@ async def correct_parcel_forecasts(
 
         await session.commit()
 
-    await engine.dispose()
-
     return {
         "status": "completed",
         "processed": processed,
@@ -245,15 +240,12 @@ class WorkerSettings:
     """arq worker configuration."""
 
     functions = [ingest_forecast_data, correct_parcel_forecasts]
-    redis_settings = None  # resolved at startup from env
 
-    @classmethod
-    def get_redis_settings(cls) -> "arq.connections.RedisSettings":
+    @staticmethod
+    def redis_settings() -> "arq.connections.RedisSettings":  # type: ignore[override]
         import arq.connections
 
         return arq.connections.RedisSettings.from_dsn(settings.REDIS_URL)
 
-    on_startup = None
-    on_shutdown = None
     max_jobs = 10
     job_timeout = 3600  # 1 hour

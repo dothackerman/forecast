@@ -3,7 +3,7 @@ from __future__ import annotations
 import uuid
 from datetime import datetime
 
-from sqlalchemy import String, Float, DateTime, ForeignKey, func
+from sqlalchemy import Index, String, Float, DateTime, ForeignKey, func
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
@@ -12,6 +12,9 @@ from app.database import Base
 
 class WeatherForecast(Base):
     __tablename__ = "weather_forecasts"
+    __table_args__ = (
+        Index("ix_weather_forecasts_parcel_time", "parcel_id", "valid_time"),
+    )
 
     id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True), primary_key=True, default=uuid.uuid4

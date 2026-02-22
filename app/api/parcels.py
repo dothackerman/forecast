@@ -17,8 +17,17 @@ router = APIRouter(prefix="/parcels", tags=["parcels"])
 
 
 def _geometry_to_wkb(geojson: dict[str, Any]) -> Any:
-    """Convert GeoJSON geometry dict to GeoAlchemy2-compatible WKB element."""
+    """Convert GeoJSON geometry dict to GeoAlchemy2-compatible WKB element.
+
+    Raises:
+        HTTPException(422): if the geometry type is not Polygon or MultiPolygon.
+    """
     geom = shape(geojson)
+    if geom.geom_type not in ("Polygon", "MultiPolygon"):
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=f"Geometry must be Polygon or MultiPolygon, got {geom.geom_type}",
+        )
     return from_shape(geom, srid=4326)
 
 
@@ -85,12 +94,27 @@ async def list_parcels(
     stmt = select(Parcel).offset(offset).limit(limit)
 
     if bbox:
+        parts = bbox.split(",")
+        if len(parts) != 4:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail="bbox must be 'lon_min,lat_min,lon_max,lat_max'",
+            )
         try:
-            lon_min, lat_min, lon_max, lat_max = (float(v) for v in bbox.split(","))
+            lon_min, lat_min, lon_max, lat_max = (float(v) for v in parts)
         except ValueError:
             raise HTTPException(
                 status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
                 detail="bbox must be 'lon_min,lat_min,lon_max,lat_max'",
+            )
+        if not (-180 <= lon_min < lon_max <= 180 and -90 <= lat_min < lat_max <= 90):
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail=(
+                    "bbox coordinates out of range or inverted "
+                    "(need lon_min<lon_max, lat_min<lat_max, "
+                    "lon in [-180,180], lat in [-90,90])"
+                ),
             )
         from geoalchemy2.functions import ST_Intersects, ST_MakeEnvelope
         envelope = ST_MakeEnvelope(lon_min, lat_min, lon_max, lat_max, 4326)
