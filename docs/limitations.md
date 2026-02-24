@@ -15,7 +15,7 @@ This service is designed for pragmatic parcel-level forecasting, but it is **not
 ## Practical consequences
 
 - Spatial representativeness is limited by source NWP resolution.
-- Parcel value is generated from centroid interpolation, not full geometry-resolved simulation.
+- Parcel values are generated from centroid interpolation, not full geometry-resolved simulation.
 - Temperature adjustment uses a fixed environmental lapse rate rather than regime-dependent calibration.
 - Solar correction uses a simplified geometric factor and does not model cloud-radiation-topography interactions in detail.
 - Precipitation and humidity are mostly inherited from parent fields (not recomputed with local dynamics).
