@@ -75,3 +75,11 @@ Two async processes, one codebase:
 4. Register router in `app/main.py`: `app.include_router(router, prefix="/api/v1")`.
 5. Migration: `alembic revision --autogenerate -m "description"`.
 6. Tests with mocked DB via dependency overrides.
+
+## Git Discipline (Non-Negotiable)
+
+- Git is the backup. Treat uncommitted local work as at-risk work.
+- Commit related changes together as soon as lint/tests are green.
+- Push after each clean, meaningful commit (avoid local commit pileups).
+- Never mix unrelated changes in one commit.
+- Never end a task with relevant local-only commits not pushed.
